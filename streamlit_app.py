@@ -1,151 +1,162 @@
 import streamlit as st
-import pandas as pd
-import math
+import tempfile
+import os
+import subprocess
+import shutil
 from pathlib import Path
+import glob
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# Verificar que la dependencia openpyxl está disponible en el entorno
+try:
+    import openpyxl  # noqa: F401
+    _has_openpyxl = True
+except Exception:
+    _has_openpyxl = False
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+st.set_page_config(page_title="ETL AutoCAD", layout="wide")
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+st.title("🚀 Ejecución del ETL AutoCAD")
+st.markdown("""
+Esta aplicación ejecuta automáticamente el proceso ETL definido en **etlautocad.py**  
+Sube el archivo Excel principal del proyecto, el archivo obligatorio para `INTERNO_PROYECTO` (se acepta cualquier nombre de archivo) y el archivo de items (`Items_CTO`, también puede llamarse como quieras). Luego presiona **Ejecutar ETL**.
+""")
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+# ---- Entrada del usuario ----
+uploaded_excel = st.file_uploader("📁 Sube el archivo Excel principal del proyecto", type=["xlsx", "xls"])
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+# Uploader obligatorio adicional (acepta cualquier nombre .xlsx)
+uploaded_nterno = st.file_uploader("📁 Sube el archivo obligatorio para INTERNO_PROYECTO (cualquier archivo .xlsx)", type=["xlsx"], key="nterno")
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
+# Uploader opcional para archivo Items_CTO (si no se sube, el script intentará detectarlo en el directorio)
+uploaded_items = st.file_uploader("📁 (Opcional) Sube el archivo Items_CTO (Items_CTO_YYYY_XXXX.xlsx) — puede tener cualquier nombre", type=["xlsx"], key="items")
 
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
+run_button = st.button("▶️ Ejecutar ETL")
 
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
+# ---- Validaciones ----
+if run_button:
+    if not _has_openpyxl:
+        st.error("Falta la dependencia opcional 'openpyxl'. Instálala con `pip install openpyxl` y vuelve a intentar.")
+        st.stop()
+    if not uploaded_excel:
+        st.error("Por favor, sube el archivo Excel principal antes de ejecutar.")
+        st.stop()
 
-    return gdp_df
+    # Validar uploader obligatorio (acepta cualquier nombre de archivo .xlsx)
+    if not uploaded_nterno:
+        st.error("El archivo obligatorio para INTERNO_PROYECTO no fue subido. Por favor súbelo antes de ejecutar.")
+        st.stop()
 
-gdp_df = get_gdp_data()
+    # Validar uploader de Items_CTO
+    if not uploaded_items:
+        st.error("El archivo de items (Items_CTO) no fue subido. Por favor súbelo antes de ejecutar.")
+        st.stop()
 
-# -----------------------------------------------------------------------------
-# Draw the actual page
+    # Crear carpeta temporal
+    tmp_dir = Path(tempfile.mkdtemp(prefix="etl_run_"))
+    st.info(f"Directorio temporal creado: `{tmp_dir}`")
 
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
+    # Guardar el Excel principal subido
+    excel_path = tmp_dir / uploaded_excel.name
+    with open(excel_path, "wb") as f:
+        f.write(uploaded_excel.getbuffer())
 
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
+    # Guardar el archivo obligatorio `INTERNO_PROYECTO.xlsx` en el tmp_dir (se acepta cualquier nombre subido)
+    nterno_path = tmp_dir / "INTERNO_PROYECTO.xlsx"
+    with open(nterno_path, "wb") as f:
+        f.write(uploaded_nterno.getbuffer())
 
-# Add some spacing
-''
-''
+    # Guardar el archivo Items_CTO si fue subido (mantener nombre original para que etlautocad lo detecte)
+    if uploaded_items:
+        items_path = tmp_dir / uploaded_items.name
+        with open(items_path, "wb") as f:
+            f.write(uploaded_items.getbuffer())
 
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
+        # Además crear una copia con nombre fijo para compatibilidad: Items_CTO.xlsx
+        items_fixed = tmp_dir / "Items_CTO.xlsx"
+        with open(items_fixed, "wb") as f:
+            f.write(uploaded_items.getbuffer())
 
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
+    # Copiar el script original
+    original_script = Path("etlautocad.py")
+    if not original_script.exists():
+        st.error("No se encontró `etlautocad.py` en el mismo directorio que este script.")
+        st.stop()
 
-countries = gdp_df['Country Code'].unique()
+    # Copiarlo al directorio temporal
+    tmp_script = tmp_dir / "etlautocad.py"
+    shutil.copy(original_script, tmp_script)
 
-if not len(countries):
-    st.warning("Select at least one country")
+    # Modificar el script para eliminar input() e insertar la ruta del Excel automáticamente
+    content = tmp_script.read_text(encoding="utf-8")
 
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
+    import re
+    # Busca la línea con 'dataset = input(' y reemplaza con el path del Excel subido
+    pattern = r'dataset\s*=\s*input\(.*\)\.strip\(\)'
+    replacement = f'dataset = r"{excel_path.name}"'
+    content = re.sub(pattern, replacement, content)
 
-''
-''
-''
+    tmp_script.write_text(content, encoding="utf-8")
 
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
+    st.write("✅ Script preparado, iniciando ejecución...")
 
-st.header('GDP over time', divider='gray')
+    # Ejecutar el ETL en el entorno temporal
+    cmd = ["python", str(tmp_script.name)]
+    log_placeholder = st.empty()
+    logs = []
 
-''
+    with subprocess.Popen(
+        cmd, cwd=tmp_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+    ) as proc:
+        for line in proc.stdout:
+            logs.append(line)
+            log_placeholder.text("".join(logs[-40:]))  # muestra últimas 40 líneas
+        proc.wait()
 
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
+   # ...existing code...
+    st.success("Ejecución completada ✅")
 
-''
-''
+    # Mostrar outputs generados
+    all_outputs = list(tmp_dir.glob("*.xlsx")) + list(tmp_dir.glob("*.csv"))
+    if not all_outputs:
+        st.warning("No se detectaron archivos de salida. Verifica el log de ejecución.")
+    else:
+        # Filtrar archivos cuyo nombre contenga 'output' (case-insensitive)
+        outputs_with_keyword = [f for f in all_outputs if 'output' in f.name.lower()]
 
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
+        # Si hay archivos que contengan 'output', usarlos (hasta 3). Si no, usar hasta 3 cualquiera.
+        if outputs_with_keyword:
+            chosen = sorted(outputs_with_keyword, key=lambda p: p.name)[:3]
         else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
+            st.warning("No se detectaron archivos que contengan 'output'. Mostrando hasta 3 archivos generados.")
+            chosen = sorted(all_outputs, key=lambda p: p.name)[:3]
 
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+        st.subheader("📦 Archivos generados (hasta 3):")
+        for f in chosen:
+            if f.exists():
+                with open(f, "rb") as file:
+                    st.download_button(
+                        label=f"Descargar {f.name}",
+                        data=file.read(),
+                        file_name=f.name,
+                        mime="application/octet-stream",
+                    )
+
+        # Crear zip solo si hay archivos que contengan 'output' (hasta 3)
+        if outputs_with_keyword:
+            import zipfile
+            chosen_for_zip = sorted(outputs_with_keyword, key=lambda p: p.name)[:3]
+            zip_path = tmp_dir / "outputs_top3.zip"
+            # Crear zip solo con los archivos seleccionados
+            with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+                for f in chosen_for_zip:
+                    if f.is_file():
+                        zf.write(f, arcname=f.name)
+
+            with open(zip_path, "rb") as zf:
+                st.download_button(
+                    label="📥 Descargar los hasta 3 archivos 'output' (zip)",
+                    data=zf.read(),
+                    file_name=zip_path.name,
+                    mime="application/zip",
+                )
+print(f"ETL execution completed")
