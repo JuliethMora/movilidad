@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 import glob
 import pandas as pd
+import numpy as np
 
 # Verificar que la dependencia openpyxl está disponible en el entorno
 try:
