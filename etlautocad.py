@@ -9,8 +9,32 @@ Original file is located at
 # INICIO
 """
 
-#import pandas as pd
+import pandas as pd
+import sys
+
+# Wrap pandas.read_excel to provide a clear message if openpyxl is missing.
+_orig_read_excel = pd.read_excel
+def _safe_read_excel(*args, **kwargs):
+    try:
+        return _orig_read_excel(*args, **kwargs)
+    except ImportError as e:
+        msg = str(e)
+        if 'openpyxl' in msg or "Missing optional dependency 'openpyxl'" in msg:
+            print("❌ Error al leer archivo: Missing optional dependency 'openpyxl'.  Use pip or conda to install openpyxl.")
+            sys.exit(1)
+        raise
+
+pd.read_excel = _safe_read_excel
+import numpy as np
 import os
+#from google.colab import drive
+#drive.mount('/content/drive')
+# import libs
+#os.chdir('/content/drive/My Drive/MOVILIDAD')
+#from headers import file_headers
+
+
+#os.chdir('/content/drive/My Drive/proyecto_mov')
 
 #Read excel file
 
@@ -107,7 +131,7 @@ if df_raw_cols.empty and df_raw.empty:
 else:
     print("✅ Datos cargados desde hoja:",
           "DEMARCACION" if df_raw_cols.empty else "VERTICAL")
-    display(df_raw_cols.head(), df_raw.head())
+    #display(df_raw_cols.head(), df_raw.head())
 
 """## Tabla 1. CON_CONTRATO"""
 
@@ -1215,7 +1239,25 @@ def clean_multilevel_columns_item(file_path):
     return df
 
 #Aviriguar hoja exacta para extrae la informacion
-file_item = 'Items_CTO_2024_3653.xlsx'
+import glob
+
+# Identificar automáticamente el archivo de items (Items_CTO_*.xlsx).
+# Si no se encuentra, buscar cualquier archivo xlsx que contenga 'item' en el nombre.
+candidates = glob.glob('Items*.xlsx') + glob.glob('*Items*.xlsx')
+if not candidates:
+    # Buscar archivos que contengan 'item' en el nombre (case-insensitive)
+    all_xlsx = glob.glob('*.xlsx')
+    for f in all_xlsx:
+        if 'item' in f.lower():
+            candidates.append(f)
+            break
+
+if not candidates:
+    print("❌ No se encontró archivo 'Items_CTO_*.xlsx' ni ningún archivo con 'item' en el nombre en el directorio. Archivos disponibles:", glob.glob('*.xlsx'))
+    raise FileNotFoundError("Items_CTO file not found. Por favor coloca el archivo Items_CTO_YYYY_NNNN.xlsx en el mismo directorio.")
+
+file_item = candidates[0]
+print(f"Usando archivo de items detectado: {file_item}")
 
 item_data = clean_multilevel_columns_item(file_item)
 
@@ -1500,7 +1542,7 @@ try:
     raise SystemExit("DataFrame vacío, deteniendo ejecución.") # Stop execution if DataFrame is empty
   else:
     print("✅ DataFrame 'data' cargado correctamente:")
-    display(data.head()) # Use display for better formatting
+    #display(data.head()) # Use display for better formatting
 except Exception as e:
   print(f"⚠️ Error al cargar o procesar el archivo: {e}")
   print("Por favor, verifica el nombre del archivo o la hoja y vuelve a intentarlo.")
@@ -2434,10 +2476,10 @@ mask_duplicates = data.apply(lambda row: len(set([row['TRAMO_EJE.1'], row['TRAMO
 df_duplicate_tramos = data.loc[mask_duplicates, :].copy()
 
 # Display the resulting DataFrame
-display(df_duplicate_tramos)
+#display(df_duplicate_tramos)
 
 print(data.columns)
-display(data.head())
+#display(data.head())
 
 try:
   data = clean_multilevel_columns(dataset)
