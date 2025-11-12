@@ -5,6 +5,7 @@ import subprocess
 import shutil
 from pathlib import Path
 import glob
+import pandas as pd
 
 # Verificar que la dependencia openpyxl está disponible en el entorno
 try:
