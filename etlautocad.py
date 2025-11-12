@@ -10,16 +10,7 @@ Original file is located at
 """
 
 #import pandas as pd
-import numpy as np
-import os
-from google.colab import drive
-drive.mount('/content/drive')
-# import libs
-os.chdir('/content/drive/My Drive/MOVILIDAD')
-from headers import file_headers
 
-
-os.chdir('/content/drive/My Drive/proyecto_mov')
 
 #Read excel file
 
