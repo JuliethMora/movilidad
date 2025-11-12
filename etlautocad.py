@@ -9,7 +9,7 @@ Original file is located at
 # INICIO
 """
 
-import pandas as pd
+#import pandas as pd
 import numpy as np
 import os
 from google.colab import drive
