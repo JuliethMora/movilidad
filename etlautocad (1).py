@@ -9,7 +9,7 @@ Original file is located at
 # INICIO
 """
 
-import pandas as pd
+#import pandas as pd
 import sys
 
 # Wrap pandas.read_excel to provide a clear message if openpyxl is missing.
